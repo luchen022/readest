@@ -23,7 +23,9 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Needs the upstream repo's signing and deploy secrets; skip on forks.
   compute-version:
+    if: github.repository == 'readest/readest'
     runs-on: ubuntu-latest
     outputs:
       nightly_version: ${{ steps.v.outputs.nightly_version }}

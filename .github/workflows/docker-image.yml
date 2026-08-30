@@ -17,7 +17,9 @@ permissions:
   contents: read
 
 jobs:
+  # Needs DOCKERHUB_TOKEN / DOCKERHUB_USERNAME secrets from the upstream repo.
   build:
+    if: github.repository == 'readest/readest'
     permissions:
       contents: read
       packages: write
@@ -88,6 +90,7 @@ jobs:
           retention-days: 1
 
   merge:
+    if: github.repository == 'readest/readest'
     needs: build
     permissions:
       contents: read

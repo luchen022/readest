@@ -6,7 +6,10 @@ on:
 permissions:
   contents: read
 jobs:
+  # Requires VERCEL_TOKEN / ORG_ID / PROJECT_ID secrets that only exist in
+  # the upstream repo — skip everywhere else instead of failing.
   build_and_deploy:
+    if: github.repository == 'readest/readest'
     runs-on: ubuntu-latest
     permissions:
       contents: read
