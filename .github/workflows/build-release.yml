@@ -181,6 +181,15 @@ jobs:
           EOF
           cat apps/readest-app/src-tauri/tauri.fork.conf.json
 
+      # Compute the release tag locally instead of relying on job outputs:
+      # the releaseId passed from create-release reached tauri-action empty
+      # once ("No releaseId or tagName provided, skipping all uploads").
+      - name: compute release tag
+        shell: bash
+        run: |
+          version=$(node -p "require('./apps/readest-app/package.json').version")
+          echo "RELEASE_TAG=v${version}-${GITHUB_SHA::7}" >> $GITHUB_ENV
+
       # PINNED to a rev, not the branch tip: on 2026-07-31 the fork rewrote the
       # sharun bundler to re-download quick-sharun.sh on EVERY build instead of
       # only when it is missing from the cache, which defeats the cache seed
@@ -226,7 +235,7 @@ jobs:
           echo "storeFile=$RUNNER_TEMP/keystore.jks" >> keystore.properties
           popd
 
-          version=${{ needs.create-release.outputs.release_version }}
+          version=$(node -p "require('./package.json').version")
           apk_path=src-tauri/gen/android/app/build/outputs/apk/universal/release
           universial_apk=Readest_${version}_universal.apk
           arm64_apk=Readest_${version}_arm64.apk
@@ -236,9 +245,9 @@ jobs:
           cp ${apk_path}/app-universal-release.apk $arm64_apk
 
           echo "Uploading $universial_apk to GitHub release"
-          gh release upload ${{ needs.create-release.outputs.release_tag }} $universial_apk --clobber
+          gh release upload $RELEASE_TAG $universial_apk --clobber
           echo "Uploading $arm64_apk to GitHub release"
-          gh release upload ${{ needs.create-release.outputs.release_tag }} $arm64_apk --clobber
+          gh release upload $RELEASE_TAG $arm64_apk --clobber
 
       - uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1.0.0
         id: tauri
@@ -252,5 +261,7 @@ jobs:
           # On Linux, build with the Rust `cargo tauri` CLI installed above so
           # the new (truly-portable AppImage) bundler is used.
           tauriScript: ${{ matrix.config.release == 'linux' && 'cargo tauri' || '' }}
-          releaseId: ${{ needs.create-release.outputs.release_id }}
+          # tauri-action resolves the tag to the pre-created release and
+          # uploads there (no cross-job releaseId needed).
+          tagName: ${{ env.RELEASE_TAG }}
           args: '${{ matrix.config.args }} --config src-tauri/tauri.fork.conf.json'
