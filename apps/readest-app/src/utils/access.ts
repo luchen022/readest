@@ -65,7 +65,7 @@ export const isCloudSyncInPlan = (plan: UserPlan): boolean =>
  * Every gate goes through {@link isCloudSyncAllowed}, so this flag is the
  * whole toggle.
  */
-export const CLOUD_SYNC_REQUIRES_PREMIUM = true;
+export const CLOUD_SYNC_REQUIRES_PREMIUM = false;
 
 /**
  * Whether third-party cloud sync is available for a plan. Falls back to the
