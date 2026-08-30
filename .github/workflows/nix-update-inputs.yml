@@ -6,7 +6,9 @@ on:
     - cron: '0 0 * * 0'
 
 jobs:
+  # Upstream flake maintenance; skip on forks.
   nix-flake-update:
+    if: github.repository == 'readest/readest'
     permissions:
       contents: write
       id-token: write

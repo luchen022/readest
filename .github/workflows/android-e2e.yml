@@ -21,7 +21,8 @@ permissions:
 
 jobs:
   android-e2e:
-    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'e2e-android')
+    # Upstream device-farm e2e; skip on forks to save Actions minutes.
+    if: github.repository == 'readest/readest' && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'e2e-android'))
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
