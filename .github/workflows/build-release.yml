@@ -164,6 +164,20 @@ jobs:
           echo "NEXT_PUBLIC_APP_PLATFORM=tauri" >> .env.local
           cp .env.local apps/readest-app/.env.local
 
+      # Fork builds have no TAURI_SIGNING_PRIVATE_KEY, and tauri.conf.json
+      # enables updater artifacts ("A public key has been found, but no private
+      # key" otherwise). Overlay a config that turns them off everywhere.
+      - name: disable updater artifacts (fork builds)
+        run: |
+          cat > apps/readest-app/src-tauri/tauri.fork.conf.json <<'EOF'
+          {
+            "bundle": {
+              "createUpdaterArtifacts": false
+            }
+          }
+          EOF
+          cat apps/readest-app/src-tauri/tauri.fork.conf.json
+
       # PINNED to a rev, not the branch tip: on 2026-07-31 the fork rewrote the
       # sharun bundler to re-download quick-sharun.sh on EVERY build instead of
       # only when it is missing from the cache, which defeats the cache seed
@@ -213,9 +227,9 @@ jobs:
           apk_path=src-tauri/gen/android/app/build/outputs/apk/universal/release
           universial_apk=Readest_${version}_universal.apk
           arm64_apk=Readest_${version}_arm64.apk
-          pnpm tauri android build
+          pnpm tauri android build --config src-tauri/tauri.fork.conf.json
           cp ${apk_path}/app-universal-release.apk $universial_apk
-          pnpm tauri android build -t aarch64
+          pnpm tauri android build -t aarch64 --config src-tauri/tauri.fork.conf.json
           cp ${apk_path}/app-universal-release.apk $arm64_apk
 
           echo "Uploading $universial_apk to GitHub release"
@@ -236,4 +250,4 @@ jobs:
           # the new (truly-portable AppImage) bundler is used.
           tauriScript: ${{ matrix.config.release == 'linux' && 'cargo tauri' || '' }}
           releaseId: ${{ needs.create-release.outputs.release_id }}
-          args: ${{ matrix.config.args || '' }}
+          args: '${{ matrix.config.args }} --config src-tauri/tauri.fork.conf.json'
