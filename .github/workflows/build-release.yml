@@ -236,16 +236,15 @@ jobs:
           popd
 
           version=$(node -p "require('./package.json').version")
-          apk_path=src-tauri/gen/android/app/build/outputs/apk/universal/release
-          universial_apk=Readest_${version}_universal.apk
+          # arm64-only build: covers every mainstream phone since 2016 and
+          # skips the 4-ABI universal build, roughly halving Android time.
+          # Same fixed signing key as before, so it installs over both the
+          # universal and arm64 builds users already have.
           arm64_apk=Readest_${version}_arm64.apk
-          pnpm tauri android build --config src-tauri/tauri.fork.conf.json
-          cp ${apk_path}/app-universal-release.apk $universial_apk
           pnpm tauri android build -t aarch64 --config src-tauri/tauri.fork.conf.json
+          apk_path=src-tauri/gen/android/app/build/outputs/apk/universal/release
           cp ${apk_path}/app-universal-release.apk $arm64_apk
 
-          echo "Uploading $universial_apk to GitHub release"
-          gh release upload $RELEASE_TAG $universial_apk --clobber
           echo "Uploading $arm64_apk to GitHub release"
           gh release upload $RELEASE_TAG $arm64_apk --clobber
 
