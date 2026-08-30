@@ -385,6 +385,13 @@ const LangPanel: React.FC<SettingsPanelPanelProp> = ({ bookKey, onRegisterReset 
             options={getLangOptions(TRANSLATOR_LANGS)}
           />
         </SettingsRow>
+        {translationProvider === 'openai' && (
+          <div className='bg-base-200/50 text-base-content/70 px-4 py-3 text-sm leading-relaxed'>
+            {_(
+              'Uses the API key, base URL and model configured in Settings → AI ("OpenRouter (Custom)"). Any OpenAI-compatible /v1/chat/completions endpoint works.',
+            )}
+          </div>
+        )}
       </BoxedList>
 
       {(isCJKEnv() || view?.language.isCJK) && (
