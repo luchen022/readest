@@ -1,0 +1,239 @@
+# Build every platform on each push to main and publish the artifacts to an
+# auto-created GitHub pre-release (tag: v<version>-<short-sha>).
+#
+# Differences from release.yml (the official one):
+#   - Triggers on push instead of a manually published release; creates the
+#     release itself, marked as a pre-release.
+#   - No signing secrets required for desktop: macOS ships unsigned (right-
+#     click -> Open on first launch), the desktop updater signatures /
+#     latest.json are skipped. Android requires three repo secrets (fixed
+#     keystore, so new builds install over old ones without uninstalling):
+#       ANDROID_KEY_BASE64   - base64 of the PKCS12/JKS keystore file
+#       ANDROID_KEY_ALIAS    - key alias inside the keystore (e.g. "readest")
+#       ANDROID_KEY_PASSWORD - keystore & key password
+#   - Skips the Windows portable rebuild, KOReader/Calibre plugins, browser
+#     extension, build provenance attestation, and the R2 upload.
+#   - No analytics/Sentry env is injected; the app falls back to the defaults
+#     committed in apps/readest-app/.env.
+
+name: Build Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions: read-all
+
+concurrency:
+  group: build-release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  create-release:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.create.outputs.release_id }}
+      release_tag: ${{ steps.create.outputs.release_tag }}
+      release_version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: setup node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+
+      - name: get version
+        id: version
+        run: |
+          version=$(node -p "require('./apps/readest-app/package.json').version")
+          echo "version=$version" >> $GITHUB_OUTPUT
+
+      - name: create release
+        id: create
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          version=${{ steps.version.outputs.version }}
+          tag="v${version}-${GITHUB_SHA::7}"
+          if gh release view "$tag" --json id --jq .id > /dev/null 2>&1; then
+            echo "Release $tag already exists, reusing it"
+          else
+            gh release create "$tag" \
+              --title "Readest $tag" \
+              --notes "Automated build of commit ${GITHUB_SHA} (branch: ${GITHUB_REF_NAME})." \
+              --prerelease
+          fi
+          release_id=$(gh release view "$tag" --json id --jq .id)
+          echo "release_id=$release_id" >> $GITHUB_OUTPUT
+          echo "release_tag=$tag" >> $GITHUB_OUTPUT
+
+  build-tauri:
+    needs: create-release
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          - os: ubuntu-latest
+            release: android
+            rust_target: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+          - os: ubuntu-22.04
+            release: linux
+            arch: x86_64
+            rust_target: x86_64-unknown-linux-gnu
+          - os: ubuntu-22.04-arm
+            release: linux
+            arch: aarch64
+            rust_target: aarch64-unknown-linux-gnu
+          - os: macos-latest
+            release: macos
+            arch: aarch64
+            rust_target: x86_64-apple-darwin,aarch64-apple-darwin
+            # Unsigned build: no Apple signing config overlay.
+            args: '--target universal-apple-darwin'
+          - os: windows-latest
+            release: windows
+            arch: x86_64
+            rust_target: x86_64-pc-windows-msvc
+            args: '--target x86_64-pc-windows-msvc --bundles nsis'
+          - os: windows-latest
+            release: windows
+            arch: aarch64
+            rust_target: aarch64-pc-windows-msvc
+            args: '--target aarch64-pc-windows-msvc --bundles nsis'
+
+    runs-on: ${{ matrix.config.os }}
+    # The Android build alone runs ~50min on a cold cache.
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: initialize git submodules
+        run: git submodule update --init --recursive
+
+      - name: setup pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+
+      - name: setup node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: setup Java (for Android build only)
+        if: matrix.config.release == 'android'
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: setup Android SDK (for Android build only)
+        if: matrix.config.release == 'android'
+        uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4
+
+      - name: install NDK (for Android build only)
+        if: matrix.config.release == 'android'
+        run: sdkmanager "ndk;28.2.13676358"
+
+      - name: install dependencies
+        run: pnpm install --frozen-lockfile --prefer-offline
+
+      - name: copy pdfjs-dist and simplecc-dist to public directory
+        run: pnpm --filter @readest/readest-app setup-vendors
+
+      - name: install Rust stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          targets: ${{ matrix.config.rust_target }}
+
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        with:
+          key: ${{ matrix.config.os }}-${{ matrix.config.release }}-${{ matrix.config.arch }}-cargo
+
+      - name: install dependencies (ubuntu only)
+        if: contains(matrix.config.os, 'ubuntu') && matrix.config.release != 'android'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libfontconfig-dev libgtk-3-dev libwebkit2gtk-4.1 libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1 libjavascriptcoregtk-4.1-dev gir1.2-javascriptcoregtk-4.1 gir1.2-webkit2-4.1 libappindicator3-dev librsvg2-dev patchelf xdg-utils
+
+      - name: create .env.local file for Next.js
+        run: |
+          echo "NEXT_PUBLIC_APP_PLATFORM=tauri" >> .env.local
+          cp .env.local apps/readest-app/.env.local
+
+      # PINNED to a rev, not the branch tip: on 2026-07-31 the fork rewrote the
+      # sharun bundler to re-download quick-sharun.sh on EVERY build instead of
+      # only when it is missing from the cache, which defeats the cache seed
+      # below and hangs the Linux legs under Xvfb (#4906). Keep in sync with
+      # release.yml / nightly.yml.
+      - name: Override tauri-cli with custom AppImage format (Linux)
+        if: matrix.config.release == 'linux'
+        run: cargo install tauri-cli --git https://github.com/tauri-apps/tauri --rev 162626969b382d52faebdf6c7264460bd9a47d1f --force
+
+      - name: pin quick-sharun.sh for AppImage bundling (Linux)
+        if: matrix.config.release == 'linux'
+        run: |
+          set -euo pipefail
+          cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/tauri"
+          mkdir -p "$cache_dir"
+          curl -fsSL --retry 3 -o "$cache_dir/quick-sharun.sh" \
+            "https://raw.githubusercontent.com/pkgforge-dev/Anylinux-AppImages/b3a9e985cdedf7efa81d172f182cd13983743147/useful-tools/quick-sharun.sh"
+          chmod +x "$cache_dir/quick-sharun.sh"
+
+      - name: build and upload Android apks
+        if: matrix.config.release == 'android'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
+        run: |
+          cd apps/readest-app/
+          rm -rf src-tauri/gen/android
+          pnpm tauri android init
+          pnpm tauri icon ../../data/icons/readest-book.png
+          git checkout .
+
+          # Fixed signing keystore from repo secrets, so every build is signed
+          # with the same key and installs over the previous one. The build
+          # fails fast with a clear message when the secrets are missing.
+          pushd src-tauri/gen/android
+          if [ -z "${{ secrets.ANDROID_KEY_BASE64 }}" ]; then
+            echo "::error::Android signing secrets are not configured. Set ANDROID_KEY_BASE64, ANDROID_KEY_ALIAS and ANDROID_KEY_PASSWORD in repo Settings -> Secrets and variables -> Actions."
+            exit 1
+          fi
+          base64 -d <<< "${{ secrets.ANDROID_KEY_BASE64 }}" > $RUNNER_TEMP/keystore.jks
+          echo "keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}" > keystore.properties
+          echo "password=${{ secrets.ANDROID_KEY_PASSWORD }}" >> keystore.properties
+          echo "storeFile=$RUNNER_TEMP/keystore.jks" >> keystore.properties
+          popd
+
+          version=${{ needs.create-release.outputs.release_version }}
+          apk_path=src-tauri/gen/android/app/build/outputs/apk/universal/release
+          universial_apk=Readest_${version}_universal.apk
+          arm64_apk=Readest_${version}_arm64.apk
+          pnpm tauri android build
+          cp ${apk_path}/app-universal-release.apk $universial_apk
+          pnpm tauri android build -t aarch64
+          cp ${apk_path}/app-universal-release.apk $arm64_apk
+
+          echo "Uploading $universial_apk to GitHub release"
+          gh release upload ${{ needs.create-release.outputs.release_tag }} $universial_apk --clobber
+          echo "Uploading $arm64_apk to GitHub release"
+          gh release upload ${{ needs.create-release.outputs.release_tag }} $arm64_apk --clobber
+
+      - uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1.0.0
+        id: tauri
+        if: matrix.config.release != 'android'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_BUNDLER_NEW_APPIMAGE_FORMAT: 'true'
+          NODE_OPTIONS: '--max-old-space-size=8192'
+        with:
+          projectPath: apps/readest-app
+          # On Linux, build with the Rust `cargo tauri` CLI installed above so
+          # the new (truly-portable AppImage) bundler is used.
+          tauriScript: ${{ matrix.config.release == 'linux' && 'cargo tauri' || '' }}
+          releaseId: ${{ needs.create-release.outputs.release_id }}
+          args: ${{ matrix.config.args || '' }}
