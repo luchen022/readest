@@ -115,7 +115,10 @@ const SettingsDialog: React.FC<{ bookKey: string }> = ({ bookKey }) => {
       tab: 'AI',
       icon: PiRobot,
       label: _('AI Assistant'),
-      disabled: process.env.NODE_ENV === 'production',
+      // Upstream disables the AI panel in production builds; this fork's
+      // translation provider reads its config (base URL / API key / model)
+      // from the AI panel, so it must be reachable in release builds too.
+      disabled: false,
     },
     {
       tab: 'TTS',
