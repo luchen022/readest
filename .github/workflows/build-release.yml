@@ -167,7 +167,10 @@ jobs:
       # Fork builds have no TAURI_SIGNING_PRIVATE_KEY, and tauri.conf.json
       # enables updater artifacts ("A public key has been found, but no private
       # key" otherwise). Overlay a config that turns them off everywhere.
+      # shell: bash — Windows runners default to PowerShell, which can't parse
+      # the heredoc below.
       - name: disable updater artifacts (fork builds)
+        shell: bash
         run: |
           cat > apps/readest-app/src-tauri/tauri.fork.conf.json <<'EOF'
           {
